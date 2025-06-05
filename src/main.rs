@@ -6,20 +6,24 @@ mod types;
 
 use clap::Parser;
 use std::collections::BTreeSet; // For unique canonical paths
-use std::path::PathBuf;
+use std::path::PathBuf; // Though not directly used here, often useful. Let's keep it for now.
 
 // Bring our types into scope
 use config::Config;
 use error::AppError;
 use types::{InputResolution, ResolvedFile};
 
+// Import for clipboard functionality
+use arboard::Clipboard;
+
 #[derive(Parser, Debug)]
 #[clap(
-    author = "Your Name", // Replace with your name/handle
-    version = "0.1.0",
-    about = "Builds context strings from code files for LLMs.",
-    long_about = "Reads specified code files (or files found by partial names/in folders) \
-                  and concatenates their contents into a single Markdown formatted string."
+    author = "Weston C. Beecroft",
+    version = "0.1.1", // Consider incrementing version for new feature
+    about = "Builds context strings from code files for LLMs and copies to clipboard.",
+    long_about = "Reads specified code files (or files found by partial names/in folders), \
+                  concatenates their contents into a single Markdown formatted string, \
+                  prints it to stdout, and attempts to copy it to the system clipboard."
 )]
 struct Cli {
     /// Files, partial names, or folders to include in the context.
@@ -33,10 +37,8 @@ struct Cli {
 
 fn main() -> Result<(), AppError> {
     let cli = Cli::parse();
-    let config = Config::new()?; // This can return AppError::ConfigError
+    let config = Config::new()?;
 
-    // Store all resolution attempts. The lifetime 'a of InputResolution<'a>
-    // is tied to the lifetime of strings in `cli.inputs`.
     let mut all_resolutions: Vec<InputResolution<'_>> = Vec::new();
     for input_str in &cli.inputs {
         let resolution = file_resolver::resolve_input_string(input_str, &config);
@@ -44,9 +46,8 @@ fn main() -> Result<(), AppError> {
     }
 
     let mut final_ordered_files: Vec<ResolvedFile> = Vec::new();
-    let mut seen_canonical_paths: BTreeSet<PathBuf> = BTreeSet::new(); // Use BTreeSet
+    let mut seen_canonical_paths: BTreeSet<PathBuf> = BTreeSet::new();
 
-    // For collecting issues to report
     let mut path_does_not_exist_errors: Vec<&InputResolution<'_>> = Vec::new();
     let mut not_founds: Vec<&InputResolution<'_>> = Vec::new();
     let mut ambiguities_found: Vec<&InputResolution<'_>> = Vec::new();
@@ -55,7 +56,6 @@ fn main() -> Result<(), AppError> {
         match resolution {
             InputResolution::Success(resolved_files_for_input) => {
                 for resolved_file in resolved_files_for_input {
-                    // Add to final list only if its canonical path hasn't been seen
                     if seen_canonical_paths.insert(resolved_file.canonical_path().to_path_buf()) {
                         final_ordered_files.push(resolved_file.clone());
                     }
@@ -73,7 +73,6 @@ fn main() -> Result<(), AppError> {
         }
     }
 
-    // If there were any problems that prevent output generation, report them.
     if !path_does_not_exist_errors.is_empty()
         || !not_founds.is_empty()
         || !ambiguities_found.is_empty()
@@ -119,7 +118,6 @@ fn main() -> Result<(), AppError> {
             }
         }
 
-        // Optionally, list successfully resolved files even in case of error
         if !final_ordered_files.is_empty() {
             eprintln!("\nSuccessfully resolved files (would have been included):");
             for resolved_file in &final_ordered_files {
@@ -131,37 +129,32 @@ fn main() -> Result<(), AppError> {
 
         eprintln!("\nPlease resolve the issues above and try again.");
         return Err(AppError::ResolutionError {
-            input: "Multiple Inputs".to_string(), // Generic summary
+            input: "Multiple Inputs".to_string(),
             message: "One or more inputs could not be resolved.".to_string(),
         });
     }
 
-    // If we reach here, all inputs were resolved successfully (or resulted in empty sets).
     if final_ordered_files.is_empty() {
         if cli.inputs.is_empty() {
-            // Should be caught by clap's `required=true`
-            println!("No input files specified.");
+            eprintln!("No input files specified."); // Should be caught by clap
         } else {
-            println!("No files were found or resolved based on your input.");
+            eprintln!("No files were found or resolved based on your input.");
         }
-        return Ok(()); // Successful exit, just nothing to do.
+        return Ok(());
     }
 
-    // Announce the files that will be included.
-    println!("The following files will be included in the context (in order):");
+    eprintln!("The following files will be included in the context (in order):");
     for resolved_file in &final_ordered_files {
-        println!("- {:?}", resolved_file.display_path());
+        eprintln!("- {:?}", resolved_file.display_path());
     }
-    println!("\nGenerating context string...\n");
 
     let mut markdown_output = String::new();
     for resolved_file in &final_ordered_files {
         let file_content = match std::fs::read_to_string(resolved_file.canonical_path()) {
             Ok(content) => content,
             Err(e) => {
-                // This can happen if file is deleted/permissions change between resolution and read.
                 eprintln!(
-                    "Warning: Failed to read file content for {:?} (resolved from {}): {}. Including error in output.",
+                    "Warning: Failed to read file content for {:?} (from {}): {}. Including error in output.",
                     resolved_file.display_path(),
                     resolved_file.canonical_path().display(),
                     e
@@ -174,14 +167,43 @@ fn main() -> Result<(), AppError> {
             }
         };
 
-        // Use the display_path for the filename header in the Markdown.
         markdown_output.push_str(&format!(
             "{}\n```\n{}\n```\n\n",
             resolved_file.display_path().to_string_lossy(),
-            file_content.trim_end() // Trim trailing newline from file content
+            file_content.trim_end()
         ));
     }
 
+    // Attempt to copy to clipboard
+    match Clipboard::new() {
+        Ok(mut clipboard) => {
+            // Added 'mut' here
+            match clipboard.set_text(markdown_output.clone()) {
+                // Clone so we can still print
+                Ok(_) => {
+                    eprintln!(
+                        "\nContext successfully copied to clipboard ({} bytes, {} lines).",
+                        markdown_output.len(),
+                        markdown_output.lines().count()
+                    );
+                }
+                Err(err) => {
+                    eprintln!(
+                        "\nWarning: Failed to copy context to clipboard: {}. Output will be printed to stdout below.",
+                        err
+                    );
+                }
+            }
+        }
+        Err(err) => {
+            eprintln!(
+                "\nWarning: Failed to initialize clipboard: {}. Output will be printed to stdout below.",
+                err
+            );
+        }
+    }
+
+    // Always print the final markdown to stdout
     print!("{}", markdown_output);
 
     Ok(())
