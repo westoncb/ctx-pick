@@ -1,5 +1,6 @@
 // Declare the modules we've created
 mod config;
+mod display;
 mod error;
 mod file_resolver;
 mod types;
@@ -10,6 +11,7 @@ use std::path::PathBuf; // Though not directly used here, often useful. Let's ke
 
 // Bring our types into scope
 use config::Config;
+use display::{DisplayManager, generate_full_markdown};
 use error::AppError;
 use types::{InputResolution, ResolvedFile};
 
@@ -38,6 +40,7 @@ struct Cli {
 fn main() -> Result<(), AppError> {
     let cli = Cli::parse();
     let config = Config::new()?;
+    let display = DisplayManager::new();
 
     let mut all_resolutions: Vec<InputResolution<'_>> = Vec::new();
     for input_str in &cli.inputs {
@@ -77,57 +80,15 @@ fn main() -> Result<(), AppError> {
         || !not_founds.is_empty()
         || !ambiguities_found.is_empty()
     {
-        eprintln!("Could not proceed due to unresolved inputs:");
-        eprintln!("-----------------------------------------");
+        display
+            .print_resolution_errors(
+                &path_does_not_exist_errors,
+                &not_founds,
+                &ambiguities_found,
+                &final_ordered_files,
+            )
+            .unwrap_or_else(|e| eprintln!("Display error: {}", e));
 
-        if !path_does_not_exist_errors.is_empty() {
-            eprintln!("\nThe following specified paths do not exist:");
-            for case in path_does_not_exist_errors {
-                if let InputResolution::PathDoesNotExist {
-                    input_string,
-                    path_tried,
-                } = case
-                {
-                    eprintln!("  - Input: '{}' (checked: {:?})", input_string, path_tried);
-                }
-            }
-        }
-
-        if !not_founds.is_empty() {
-            eprintln!("\nThe following inputs could not be found:");
-            for case in not_founds {
-                if let InputResolution::NotFound { input_string } = case {
-                    eprintln!("  - Input: '{}'", input_string);
-                }
-            }
-        }
-
-        if !ambiguities_found.is_empty() {
-            eprintln!("\nThe following inputs are ambiguous:");
-            for case in ambiguities_found {
-                if let InputResolution::Ambiguous {
-                    input_string,
-                    conflicting_paths,
-                } = case
-                {
-                    eprintln!("  - Input: '{}' matched:", input_string);
-                    for path in conflicting_paths {
-                        eprintln!("    - {:?}", path);
-                    }
-                }
-            }
-        }
-
-        if !final_ordered_files.is_empty() {
-            eprintln!("\nSuccessfully resolved files (would have been included):");
-            for resolved_file in &final_ordered_files {
-                eprintln!("  - {:?}", resolved_file.display_path());
-            }
-        } else {
-            eprintln!("\nNo files were successfully resolved.");
-        }
-
-        eprintln!("\nPlease resolve the issues above and try again.");
         return Err(AppError::ResolutionError {
             input: "Multiple Inputs".to_string(),
             message: "One or more inputs could not be resolved.".to_string(),
@@ -143,68 +104,42 @@ fn main() -> Result<(), AppError> {
         return Ok(());
     }
 
-    eprintln!("The following files will be included in the context (in order):");
-    for resolved_file in &final_ordered_files {
-        eprintln!("- {:?}", resolved_file.display_path());
-    }
+    // Show styled preview of files that will be included
+    display
+        .print_file_preview(&final_ordered_files)
+        .unwrap_or_else(|e| eprintln!("Display error: {}", e));
 
-    let mut markdown_output = String::new();
-    for resolved_file in &final_ordered_files {
-        let file_content = match std::fs::read_to_string(resolved_file.canonical_path()) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!(
-                    "Warning: Failed to read file content for {:?} (from {}): {}. Including error in output.",
-                    resolved_file.display_path(),
-                    resolved_file.canonical_path().display(),
-                    e
-                );
-                format!(
-                    "Error: Could not read file content for {:?}.\nDetails: {}",
-                    resolved_file.display_path(),
-                    e
-                )
-            }
-        };
+    // Generate the full markdown output for clipboard
+    let markdown_output = generate_full_markdown(&final_ordered_files);
 
-        markdown_output.push_str(&format!(
-            "{}\n```\n{}\n```\n\n",
-            resolved_file.display_path().to_string_lossy(),
-            file_content.trim_end()
-        ));
-    }
-
-    // Attempt to copy to clipboard
+    // Attempt to copy to clipboard with styled status reporting
     match Clipboard::new() {
-        Ok(mut clipboard) => {
-            // Added 'mut' here
-            match clipboard.set_text(markdown_output.clone()) {
-                // Clone so we can still print
-                Ok(_) => {
-                    eprintln!(
-                        "\nContext successfully copied to clipboard ({} bytes, {} lines).",
+        Ok(mut clipboard) => match clipboard.set_text(markdown_output.clone()) {
+            Ok(_) => {
+                display
+                    .print_clipboard_status(
+                        true,
                         markdown_output.len(),
-                        markdown_output.lines().count()
-                    );
-                }
-                Err(err) => {
-                    eprintln!(
-                        "\nWarning: Failed to copy context to clipboard: {}. Output will be printed to stdout below.",
-                        err
-                    );
-                }
+                        markdown_output.lines().count(),
+                        None,
+                    )
+                    .unwrap_or_else(|e| eprintln!("Display error: {}", e));
             }
-        }
+            Err(err) => {
+                display
+                    .print_clipboard_status(false, 0, 0, Some(&err.to_string()))
+                    .unwrap_or_else(|e| eprintln!("Display error: {}", e));
+            }
+        },
         Err(err) => {
-            eprintln!(
-                "\nWarning: Failed to initialize clipboard: {}. Output will be printed to stdout below.",
-                err
-            );
+            display
+                .print_clipboard_status(false, 0, 0, Some(&err.to_string()))
+                .unwrap_or_else(|e| eprintln!("Display error: {}", e));
         }
     }
 
-    // Always print the final markdown to stdout
-    print!("{}", markdown_output);
+    // Note: Full markdown is copied to clipboard, no need to spam terminal
+    // print!("{}", markdown_output);
 
     Ok(())
 }
