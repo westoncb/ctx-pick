@@ -78,6 +78,7 @@ Included files:
 
 The content copied to the clipboard will be formatted in Markdown like this:
 
+````markdown
 src/config.rs
 
 ```rust
@@ -91,6 +92,7 @@ src/error.rs
 ```rust
 use thiserror::Error;
 
-\#[derive(Error, Debug)]
+#[derive(Error, Debug)]
 // ... (rest of file content) ...
 ```
+````
