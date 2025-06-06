@@ -7,25 +7,25 @@ mod types;
 
 use clap::Parser;
 use std::collections::BTreeSet; // For unique canonical paths
-use std::path::PathBuf; // Though not directly used here, often useful. Let's keep it for now.
+use std::path::PathBuf;
 
 // Bring our types into scope
 use config::Config;
-use display::{DisplayManager, generate_full_markdown};
-use error::AppError;
+use display::{DisplayManager, generate_full_markdown}; // generate_full_markdown is still needed
+use error::AppError; // AppError is still used by Config::new()
 use types::{InputResolution, ResolvedFile};
 
 // Import for clipboard functionality
-use arboard::Clipboard;
+use arboard::Clipboard; // Ensure this is in your Cargo.toml
 
 #[derive(Parser, Debug)]
 #[clap(
     author = "Weston C. Beecroft",
-    version = "0.1.1", // Consider incrementing version for new feature
+    version = "0.1.2", // Version bump for changes
     about = "Builds context strings from code files for LLMs and copies to clipboard.",
     long_about = "Reads specified code files (or files found by partial names/in folders), \
                   concatenates their contents into a single Markdown formatted string, \
-                  prints it to stdout, and attempts to copy it to the system clipboard."
+                  and attempts to copy it to the system clipboard, printing to stdout as a fallback."
 )]
 struct Cli {
     /// Files, partial names, or folders to include in the context.
@@ -39,7 +39,7 @@ struct Cli {
 
 fn main() -> Result<(), AppError> {
     let cli = Cli::parse();
-    let config = Config::new()?;
+    let config = Config::new()?; // This can still return AppError::ConfigError or IoError via AppError
     let display = DisplayManager::new();
 
     let mut all_resolutions: Vec<InputResolution<'_>> = Vec::new();
@@ -80,66 +80,72 @@ fn main() -> Result<(), AppError> {
         || !not_founds.is_empty()
         || !ambiguities_found.is_empty()
     {
+        // DisplayManager now handles detailed error printing to stderr
         display
             .print_resolution_errors(
                 &path_does_not_exist_errors,
                 &not_founds,
                 &ambiguities_found,
-                &final_ordered_files,
+                &final_ordered_files, // Pass currently resolved files for context
             )
-            .unwrap_or_else(|e| eprintln!("Display error: {}", e));
+            .unwrap_or_else(|e| eprintln!("Critical display error: {}", e)); // Fallback if display itself errors
 
-        return Err(AppError::ResolutionError {
-            input: "Multiple Inputs".to_string(),
-            message: "One or more inputs could not be resolved.".to_string(),
-        });
+        // Exit with a non-zero status code; detailed errors already printed
+        std::process::exit(1);
     }
 
     if final_ordered_files.is_empty() {
+        // This case implies inputs were given, but nothing resolved successfully,
+        // and no specific errors like NotFound or Ambiguous were severe enough to exit above
+        // (or they were handled gracefully by print_resolution_errors if it didn't exit).
+        // However, with the std::process::exit(1) above, this block might only be reached
+        // if inputs somehow led to no files and no *errors* that trigger the exit.
+        // For example, if all inputs were empty directories.
         if cli.inputs.is_empty() {
-            eprintln!("No input files specified."); // Should be caught by clap
+            // Should be caught by clap's `required = true`
+            eprintln!(
+                "{}",
+                display.error_style.apply_to("No input files specified.")
+            );
         } else {
-            eprintln!("No files were found or resolved based on your input.");
+            eprintln!(
+                "{}",
+                display
+                    .warning_style
+                    .apply_to("No files were found or resolved based on your input.")
+            );
         }
-        return Ok(());
+        // It's debatable whether this should be a clean exit (0) or an error exit (1).
+        // If inputs were provided but no files resulted, it could be considered an error.
+        std::process::exit(1); // Let's treat it as an issue if inputs led to no files.
     }
 
-    // Show styled preview of files that will be included
-    display
-        .print_file_preview(&final_ordered_files)
-        .unwrap_or_else(|e| eprintln!("Display error: {}", e));
-
-    // Generate the full markdown output for clipboard
+    // Generate the full markdown output for clipboard/stdout
     let markdown_output = generate_full_markdown(&final_ordered_files);
+    let markdown_lines = markdown_output.lines().count();
 
-    // Attempt to copy to clipboard with styled status reporting
-    match Clipboard::new() {
-        Ok(mut clipboard) => match clipboard.set_text(markdown_output.clone()) {
-            Ok(_) => {
-                display
-                    .print_clipboard_status(
-                        true,
-                        markdown_output.len(),
-                        markdown_output.lines().count(),
-                        None,
-                    )
-                    .unwrap_or_else(|e| eprintln!("Display error: {}", e));
-            }
-            Err(err) => {
-                display
-                    .print_clipboard_status(false, 0, 0, Some(&err.to_string()))
-                    .unwrap_or_else(|e| eprintln!("Display error: {}", e));
-            }
-        },
-        Err(err) => {
-            display
-                .print_clipboard_status(false, 0, 0, Some(&err.to_string()))
-                .unwrap_or_else(|e| eprintln!("Display error: {}", e));
-        }
+    // Attempt to copy to clipboard
+    let clipboard_result = match Clipboard::new() {
+        Ok(mut clipboard) => clipboard.set_text(markdown_output.clone()), // Clone because markdown_output might be printed to stdout
+        Err(err) => Err(err), // Propagate arboard::Error
+    };
+
+    // Display the consolidated operation summary and file previews
+    // This new function in DisplayManager will handle the conditional header
+    // based on clipboard_result and then print the file previews.
+    display
+        .print_operation_summary_and_preview(
+            &final_ordered_files,
+            &clipboard_result, // Pass the Result itself
+            markdown_lines,
+        )
+        .unwrap_or_else(|e| eprintln!("Display error during summary: {}", e));
+
+    // If clipboard copy failed, print the markdown output to stdout as a fallback
+    if clipboard_result.is_err() {
+        // The failure message to stderr should have been handled by print_operation_summary_and_preview
+        println!("{}", markdown_output);
     }
-
-    // Note: Full markdown is copied to clipboard, no need to spam terminal
-    // print!("{}", markdown_output);
 
     Ok(())
 }
