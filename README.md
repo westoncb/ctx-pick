@@ -3,21 +3,9 @@
 [](https://www.google.com/search?q=https://crates.io/crates/ctx-pick)
 [](https://opensource.org/licenses/MIT)
 
-`ctx-pick` is a handy command-line utility that gathers file contents, formats them into a single Markdown string, and copies it to your clipboard. It's designed to make it easy to provide code context to Large Language Models (LLMs).
+`ctx-pick` is a simple command-line utility that gathers file contents, formats them into a single Markdown string, and copies it to your clipboard. It's designed to make it easy to provide code context to LLMs.
 
 It intelligently finds files based on direct paths, directory names, or even partial file names, then reports on what it found before copying the final context.
-
----
-
-## Features
-
-- **Flexible File Selection**: Specify files by direct path (`src/main.rs`), directory (`src/`), or unique partial names (`main`, `display`).
-- **Recursive Search**: Automatically searches subdirectories to find files based on your input.
-- **Smart Conflict Resolution**: If a partial name is ambiguous (e.g., `lib` matches `src/lib.rs` and `tests/lib.rs`), it will alert you and list the conflicting paths.
-- **Clipboard Integration**: Copies the generated Markdown context directly to your system's clipboard.
-- **Fallback to Standard Output**: If clipboard access fails, it prints the full context to `stdout` so you can still pipe or copy it manually.
-- **Informative Previews**: Before copying, it shows a summary of the files and line counts included in the context.
-- **Clear Error Reporting**: Provides detailed, color-coded feedback for files that are not found, paths that don't exist, or ambiguous inputs.
 
 ---
 
