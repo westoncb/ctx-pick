@@ -10,3 +10,7 @@ console = "0.15.11"
 pathdiff = "0.2.3"
 thiserror = "2.0.12"
 walkdir = "2.5.0"
+
+[[bin]]
+name = "ctx-pick"
+path = "src/main.rs"
