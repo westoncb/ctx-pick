@@ -33,6 +33,36 @@ impl ResolvedFile {
     }
 }
 
+/// Represents a single, tagged symbol extracted from a source file.
+/// This structure is designed to mirror the kind of information provided
+/// by the `tree-sitter tags` CLI command.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Tag {
+    /// The name of the symbol (e.g., the function or struct name).
+    pub name: String,
+    /// The kind of symbol (e.g., "function", "method", "class").
+    pub kind: String,
+    /// The byte offset where the symbol's definition starts. Used for sorting.
+    pub start_byte: usize,
+    /// The full first line of the symbol's definition.
+    pub line_text: String,
+    /// An optional docstring associated with the symbol.
+    pub doc_string: Option<String>,
+}
+
+// Implement ordering traits to allow sorting by position in the source file.
+impl Ord for Tag {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.start_byte.cmp(&other.start_byte)
+    }
+}
+
+impl PartialOrd for Tag {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// Represents the outcome of processing a single user input string.
 /// It is generic over a lifetime `'a` to borrow the input string, avoiding allocations.
 #[derive(Debug, Clone)]
@@ -49,9 +79,7 @@ pub enum InputResolution<'a> {
     },
 
     /// The input string could not be found after searching.
-    NotFound {
-        input_string: &'a str,
-    },
+    NotFound { input_string: &'a str },
 
     /// The input string was treated as an explicit path, but it does not exist on the filesystem.
     PathDoesNotExist {

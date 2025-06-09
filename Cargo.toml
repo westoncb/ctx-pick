@@ -16,6 +16,9 @@ clap = { version = "4.5.39", features = ["derive"] }
 console = "0.15.11"
 pathdiff = "0.2.3"
 thiserror = "2.0.12"
+tree-sitter = "0.25.6"
+tree-sitter-rust = "0.24.0"
+tree-sitter-typescript = "0.23.2"
 walkdir = "2.5.0"
 
 [[bin]]
