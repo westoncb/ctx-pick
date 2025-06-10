@@ -1,6 +1,3 @@
-// main.rs
-
-// Declare all modules for the application.
 mod config;
 mod display;
 mod error;
@@ -10,35 +7,40 @@ mod types;
 
 use crate::{
     config::Config,
-    display::{DisplayManager, generate_markdown_output},
+    display::DisplayManager,
     error::AppError,
-    types::{InputResolution, ResolvedFile},
+    types::{FileContext, InputResolution, ResolvedFile},
 };
 use arboard::Clipboard;
 use clap::Parser;
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{collections::BTreeSet, path::Path, path::PathBuf};
 
-/// `ctx-pick` is a command-line utility that gathers file contents into a
-/// Markdown-formatted string for easy copying to a clipboard, tailored for
-/// providing context to LLMs.
+/// A versatile CLI tool that finds files by name, path, or glob pattern,
+/// extracts their content or a structural 'skeleton', formats it as
+/// Markdown, and copies it to the clipboard. Ideal for providing
+/// context to LLMs.
 #[derive(Parser, Debug)]
 #[clap(
     author = "Weston C. Beecroft",
-    version = "0.1.2",
+    version = "0.2.0", // Version bump for new features!
     about = "Builds context strings from code files for LLMs and copies to clipboard.",
-    long_about = "Reads specified code files (or files found by partial names/in folders), \
-                  concatenates their contents into a single Markdown formatted string, \
-                  and attempts to copy it to the system clipboard, printing to stdout as a fallback."
+    long_about = None // The long help is now the main help text above.
 )]
 struct Cli {
-    /// A space-separated list of files, partial names, or folders to include.
+    /// A space-separated list of files, partial names, folders, or glob patterns.
+    /// e.g., 'main.rs', 'src/utils', 'src/**/*.ts'
     #[arg(required = true, num_args = 1..)]
     inputs: Vec<String>,
 
-    /// If set, extracts only symbol definitions (e.g., function signatures, struct definitions)
-    /// instead of the full file content.
-    #[arg(long, help = "Extract symbols instead of full file content.")]
-    symbols: bool,
+    /// Instead of full file content, extract a structural 'skeleton' of the code
+    /// (e.g., function signatures, struct definitions) up to a certain depth.
+    /// A depth of 3-5 is usually effective.
+    #[arg(
+        long,
+        value_name = "LEVEL",
+        help = "Extract a code skeleton at a specific depth."
+    )]
+    depth: Option<usize>,
 }
 
 fn main() -> Result<(), AppError> {
@@ -47,7 +49,6 @@ fn main() -> Result<(), AppError> {
     let display = DisplayManager::new();
 
     // Resolve all user inputs into a list of `InputResolution` enums.
-    // Each input is resolved independently to gather all successes and failures.
     let mut all_resolutions: Vec<InputResolution<'_>> = Vec::new();
     for input_str in &cli.inputs {
         let resolution = file_resolver::resolve_input_string(input_str, &config);
@@ -55,12 +56,13 @@ fn main() -> Result<(), AppError> {
     }
 
     // Process all resolutions, bucketing them into successes and various error types.
-    // A BTreeSet is used to ensure that each canonical file path is included only once.
     let mut final_ordered_files: Vec<ResolvedFile> = Vec::new();
     let mut seen_canonical_paths: BTreeSet<PathBuf> = BTreeSet::new();
+
     let mut path_does_not_exist_errors: Vec<&InputResolution<'_>> = Vec::new();
     let mut not_founds: Vec<&InputResolution<'_>> = Vec::new();
     let mut ambiguities_found: Vec<&InputResolution<'_>> = Vec::new();
+    let mut invalid_glob_patterns: Vec<&InputResolution<'_>> = Vec::new(); // New error bucket
 
     for resolution in &all_resolutions {
         match resolution {
@@ -80,20 +82,26 @@ fn main() -> Result<(), AppError> {
             InputResolution::PathDoesNotExist { .. } => {
                 path_does_not_exist_errors.push(resolution);
             }
+            // Add the new case for our glob pattern errors
+            InputResolution::InvalidGlobPattern { .. } => {
+                invalid_glob_patterns.push(resolution);
+            }
         }
     }
 
-    // If any unrecoverable errors occurred (e.g., ambiguous inputs or non-existent paths),
-    // print a detailed report and exit with a non-zero status code.
-    if !path_does_not_exist_errors.is_empty()
+    // If any unrecoverable errors occurred, print a detailed report and exit.
+    let has_errors = !path_does_not_exist_errors.is_empty()
         || !not_founds.is_empty()
         || !ambiguities_found.is_empty()
-    {
+        || !invalid_glob_patterns.is_empty();
+
+    if has_errors {
         display
             .print_resolution_errors(
                 &path_does_not_exist_errors,
                 &not_founds,
                 &ambiguities_found,
+                &invalid_glob_patterns, // Pass the new bucket to the display manager
                 &final_ordered_files,
             )
             .unwrap_or_else(|e| eprintln!("Critical display error: {}", e));
@@ -103,47 +111,106 @@ fn main() -> Result<(), AppError> {
 
     // If no files were successfully resolved from the inputs, inform the user and exit.
     if final_ordered_files.is_empty() {
-        if cli.inputs.is_empty() {
-            // This case should be prevented by clap's `required = true`, but is here as a safeguard.
-            eprintln!(
-                "{}",
-                display.error_style.apply_to("No input files specified.")
-            );
-        } else {
-            eprintln!(
-                "{}",
-                display
-                    .warning_style
-                    .apply_to("No files were found or resolved based on your input.")
-            );
-        }
+        eprintln!(
+            "{}",
+            display
+                .warning_style
+                .apply_to("No files were found or resolved based on your input.")
+        );
         std::process::exit(1);
     }
 
-    // Generate the final output, either full file content or extracted symbols, based on the --symbols flag.
-    let markdown_output = generate_markdown_output(&final_ordered_files, cli.symbols);
-    let output_count = markdown_output.lines().count();
+    // 1. Process all resolved files into our new `FileContext` struct.
+    //    This function now returns a list of processed files, not a single string.
+    let file_contexts = generate_file_contexts(&final_ordered_files, cli.depth);
 
-    // Attempt to copy the generated string to the system clipboard.
+    // 2. Build the final Markdown string for the clipboard from the contexts.
+    let mut markdown_output = String::new();
+    for context in &file_contexts {
+        let lang_hint = if cli.depth.is_some() {
+            ""
+        } else {
+            Path::new(&context.display_path)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+        };
+        markdown_output.push_str(&format!(
+            "{}\n```{}\n{}\n```\n\n",
+            context.display_path,
+            lang_hint,
+            context.content.trim_end()
+        ));
+    }
+
+    // 3. Calculate the total character count from the final output.
+    let total_chars = markdown_output.len();
+    let unit_str = "characters"; // We are now always reporting total characters.
+
+    // 4. Attempt to copy to the clipboard.
     let clipboard_result = match Clipboard::new() {
         Ok(mut clipboard) => clipboard.set_text(markdown_output.clone()),
         Err(err) => Err(err),
     };
 
-    // Display the summary report, passing the mode to allow for tailored output (e.g., "lines" vs "symbols").
+    // 5. Display the summary report, passing the rich context list.
     display
         .print_operation_summary_and_preview(
-            &final_ordered_files,
+            &file_contexts, // Pass the contexts, not the old ResolvedFile list
             &clipboard_result,
-            output_count,
-            cli.symbols,
+            total_chars,
+            unit_str,
+            cli.depth,
         )
         .unwrap_or_else(|e| eprintln!("Display error during summary: {}", e));
 
-    // If clipboard access failed, print the full markdown output to stdout as a fallback.
     if clipboard_result.is_err() {
         println!("{}", markdown_output);
     }
 
     Ok(())
+}
+
+/// Processes a list of resolved files, returning a vector containing the
+/// context (full or skeleton) for each.
+fn generate_file_contexts(files: &[ResolvedFile], depth: Option<usize>) -> Vec<FileContext> {
+    let mut contexts = Vec::new();
+
+    for resolved_file in files {
+        let display_path = resolved_file.display_path().to_string_lossy().to_string();
+        let file_content_result = std::fs::read_to_string(resolved_file.canonical_path());
+
+        let final_content = match file_content_result {
+            Err(e) => format!(
+                "Error: Could not read file content for {:?}.\nDetails: {}",
+                display_path, e
+            ),
+            Ok(content) => {
+                if let Some(max_depth) = depth {
+                    let extension = resolved_file
+                        .display_path()
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("");
+                    match symbol_extractor::create_skeleton_by_depth(&content, extension, max_depth)
+                    {
+                        Ok(symbols) => symbols,
+                        Err(e) => format!(
+                            "---\n-- ERROR: Could not extract symbols from {:?}: {}\n-- Falling back to full file content.\n---\n\n{}",
+                            display_path, e, content
+                        ),
+                    }
+                } else {
+                    content
+                }
+            }
+        };
+
+        contexts.push(FileContext {
+            display_path,
+            char_count: final_content.chars().count(), // Get the char count of the final content
+            content: final_content,
+        });
+    }
+    contexts
 }

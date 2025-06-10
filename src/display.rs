@@ -1,9 +1,4 @@
-// display.rs
-
-use crate::{
-    symbol_extractor,
-    types::{InputResolution, ResolvedFile},
-};
+use crate::types::{FileContext, InputResolution, ResolvedFile};
 use arboard;
 use console::{Style, Term};
 use std::io::{self, Write};
@@ -20,6 +15,8 @@ pub struct DisplayManager {
     pub ambiguous_style: Style,
 }
 
+// --- Public API ---
+
 impl DisplayManager {
     /// Creates a new `DisplayManager` with a default set of styles.
     pub fn new() -> Self {
@@ -35,12 +32,13 @@ impl DisplayManager {
     }
 
     /// Prints a detailed report of all file resolution errors.
-    /// This is used when the program must exit early due to unresolvable inputs.
+    /// This function orchestrates the printing of different error sections.
     pub fn print_resolution_errors(
         &self,
         path_errors: &[&InputResolution],
         not_founds: &[&InputResolution],
         ambiguities: &[&InputResolution],
+        invalid_globs: &[&InputResolution],
         successful_files: &[ResolvedFile],
     ) -> io::Result<()> {
         let mut stderr = self.term.clone();
@@ -61,21 +59,19 @@ impl DisplayManager {
                     .apply_to("The following specified paths do not exist:")
             )?;
             for case in path_errors {
-                if let InputResolution::PathDoesNotExist {
-                    input_string,
-                    path_tried,
-                } = case
-                {
-                    writeln!(
-                        stderr,
-                        "  {} {} {}",
-                        self.metadata_style.apply_to("•"),
-                        self.error_style
-                            .apply_to(format!("Input: '{}'", input_string)),
-                        self.metadata_style
-                            .apply_to(format!("(checked: {:?})", path_tried))
-                    )?;
-                }
+                self.report_path_does_not_exist_case(&mut stderr, case)?;
+            }
+        }
+
+        if !invalid_globs.is_empty() {
+            writeln!(
+                stderr,
+                "\n{}",
+                self.error_style
+                    .apply_to("The following glob patterns are invalid:")
+            )?;
+            for case in invalid_globs {
+                self.report_invalid_glob_case(&mut stderr, case)?;
             }
         }
 
@@ -87,15 +83,7 @@ impl DisplayManager {
                     .apply_to("The following inputs could not be found:")
             )?;
             for case in not_founds {
-                if let InputResolution::NotFound { input_string } = case {
-                    writeln!(
-                        stderr,
-                        "  {} {}",
-                        self.metadata_style.apply_to("•"),
-                        self.warning_style
-                            .apply_to(format!("Input: '{}'", input_string))
-                    )?;
-                }
+                self.report_not_found_case(&mut stderr, case)?;
             }
         }
 
@@ -107,46 +95,7 @@ impl DisplayManager {
                     .apply_to("The following inputs are ambiguous:")
             )?;
             for case in ambiguities {
-                if let InputResolution::Ambiguous {
-                    input_string,
-                    conflicting_paths,
-                } = case
-                {
-                    write!(
-                        stderr,
-                        "  {} {} ",
-                        self.metadata_style.apply_to("•"),
-                        self.ambiguous_style.apply_to("Input")
-                    )?;
-                    write!(
-                        stderr,
-                        "{} ",
-                        self.warning_style.apply_to(format!("'{}'", input_string))
-                    )?;
-                    writeln!(stderr, "{}", self.ambiguous_style.apply_to("matched:"))?;
-
-                    const MAX_AMBIGUOUS_PATHS_TO_SHOW: usize = 8;
-                    for (i, path) in conflicting_paths.iter().enumerate() {
-                        if i < MAX_AMBIGUOUS_PATHS_TO_SHOW {
-                            writeln!(
-                                stderr,
-                                "    {} {}",
-                                self.metadata_style.apply_to("→"),
-                                self.filename_style.apply_to(format!("{:?}", path))
-                            )?;
-                        } else {
-                            let remaining = conflicting_paths.len() - MAX_AMBIGUOUS_PATHS_TO_SHOW;
-                            writeln!(
-                                stderr,
-                                "    {} ... and {} more match{}.",
-                                self.metadata_style.apply_to("→"),
-                                self.metadata_style.apply_to(remaining.to_string()),
-                                if remaining == 1 { "" } else { "es" }
-                            )?;
-                            break;
-                        }
-                    }
-                }
+                self.report_ambiguous_case(&mut stderr, case)?;
             }
         }
 
@@ -158,13 +107,7 @@ impl DisplayManager {
                     .apply_to("However, these files were successfully resolved:")
             )?;
             for resolved_file in successful_files {
-                writeln!(
-                    stderr,
-                    "  {} {}",
-                    self.metadata_style.apply_to("✓"),
-                    self.filename_style
-                        .apply_to(format!("{:?}", resolved_file.display_path()))
-                )?;
+                self.report_successful_file_case(&mut stderr, resolved_file)?;
             }
         }
 
@@ -178,29 +121,39 @@ impl DisplayManager {
     }
 
     /// Prints the final summary report after a successful operation.
-    /// This includes the clipboard status and a preview of the included files.
     pub fn print_operation_summary_and_preview(
         &self,
-        files: &[ResolvedFile],
+        contexts: &[FileContext], // <-- Receives the new struct
         clipboard_result: &Result<(), arboard::Error>,
         output_count: usize,
-        symbols_mode: bool,
+        unit_str: &str,
+        depth: Option<usize>,
     ) -> io::Result<()> {
         let mut stderr = self.term.clone();
-        let unit = if symbols_mode { "symbols" } else { "lines" };
+        let summary_verb = if depth.is_some() {
+            "Context skeleton copied"
+        } else {
+            "Context copied"
+        };
+        let file_count = contexts.len();
 
+        // ... (The summary message logic is largely the same) ...
         match clipboard_result {
             Ok(_) => {
                 writeln!(
                     stderr,
-                    "{} Context copied to clipboard ({} files, {} {})",
+                    "\n{} {} to clipboard ({} {}, {} {})",
                     self.success_style.apply_to("✅"),
-                    self.metadata_style.apply_to(files.len().to_string()),
+                    summary_verb,
+                    self.metadata_style.apply_to(file_count.to_string()),
+                    self.metadata_style
+                        .apply_to(if file_count == 1 { "file" } else { "files" }),
                     self.metadata_style.apply_to(output_count.to_string()),
-                    self.metadata_style.apply_to(unit),
+                    self.metadata_style.apply_to(unit_str)
                 )?;
             }
             Err(err) => {
+                // ... (error case is unchanged) ...
                 writeln!(
                     stderr,
                     "{} Failed to copy to clipboard.",
@@ -228,116 +181,156 @@ impl DisplayManager {
             self.filename_style.apply_to("Included files:")
         )?;
 
-        if files.is_empty() {
+        if contexts.is_empty() {
             writeln!(
                 stderr,
                 "  {}",
                 self.metadata_style.apply_to("(No files to preview)")
             )?;
         } else {
-            for (i, resolved_file) in files.iter().enumerate() {
+            for (i, context) in contexts.iter().enumerate() {
+                let (icon, label) = if let Some(d) = depth {
+                    // Skeleton mode: create the detailed label
+                    ("🧬", format!("{} (depth={})", context.display_path, d))
+                } else {
+                    // Full file mode: just use the path
+                    ("📄", context.display_path.clone())
+                };
+
                 writeln!(
                     stderr,
                     "\n{}. {}",
                     self.metadata_style.apply_to(format!("{}", i + 1)),
-                    self.filename_style
-                        .apply_to(resolved_file.display_path().to_string_lossy())
+                    self.filename_style.apply_to(label) // Use the new rich label
                 )?;
 
-                // NOTE: The per-file preview currently always shows the total line count of the
-                // source file, even in symbols mode. A future enhancement could be to show the
-                // extracted symbol count here, but that would require re-processing the file.
-                match std::fs::read_to_string(resolved_file.canonical_path()) {
-                    Ok(content) => {
-                        let total_lines = content.lines().count();
-                        writeln!(
-                            stderr,
-                            "    {} {} lines",
-                            self.metadata_style.apply_to("📄"),
-                            self.metadata_style.apply_to(total_lines.to_string())
-                        )?;
-                    }
-                    Err(e) => {
-                        writeln!(
-                            stderr,
-                            "    {} {}",
-                            self.error_style.apply_to("⚠"),
-                            self.error_style
-                                .apply_to(format!("Error reading file for preview: {}", e))
-                        )?;
-                    }
-                }
+                writeln!(
+                    stderr,
+                    "    {} {} characters",
+                    self.metadata_style.apply_to(icon),
+                    self.metadata_style.apply_to(context.char_count.to_string())
+                )?;
             }
         }
         writeln!(stderr, "\n{}", self.metadata_style.apply_to("=".repeat(40)))?;
         Ok(())
     }
-}
 
-/// Generates the final Markdown output string for the clipboard or stdout.
-///
-/// This function will either read the full file content or use the `symbol_extractor`
-/// module to get symbol definitions, based on the `symbols_mode` flag.
-pub fn generate_markdown_output(files: &[ResolvedFile], symbols_mode: bool) -> String {
-    let mut markdown_output = String::new();
+    // --- Private Error Reporters ---
 
-    for resolved_file in files {
-        let file_content_result = std::fs::read_to_string(resolved_file.canonical_path());
-
-        let output_block = match file_content_result {
-            Err(e) => format!(
-                "Error: Could not read file content for {:?}.\nDetails: {}",
-                resolved_file.display_path(),
-                e
-            ),
-            Ok(content) => {
-                if symbols_mode {
-                    // In symbols mode, attempt to extract symbols.
-                    let extension = resolved_file
-                        .display_path()
-                        .extension()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("");
-
-                    match symbol_extractor::create_skeleton_by_depth(&content, extension, 4) {
-                        Ok(symbols) => symbols,
-                        Err(e) => {
-                            // If symbol extraction fails, provide a helpful error and fall back
-                            // to including the full file content so the user still gets output.
-                            format!(
-                                "---\n-- ERROR: Could not extract symbols from {:?}: {}\n-- Falling back to full file content.\n---\n\n{}",
-                                resolved_file.display_path(),
-                                e,
-                                content
-                            )
-                        }
-                    }
-                } else {
-                    // Default mode: use the full file content.
-                    content
-                }
-            }
-        };
-
-        // For symbol output, we omit the language hint in the markdown code block
-        // as it's not a complete, compilable file.
-        let lang_hint = if symbols_mode {
-            ""
-        } else {
-            resolved_file
-                .display_path()
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-        };
-
-        markdown_output.push_str(&format!(
-            "{}\n```{}\n{}\n```\n\n",
-            resolved_file.display_path().to_string_lossy(),
-            lang_hint,
-            output_block.trim_end()
-        ));
+    fn report_path_does_not_exist_case(
+        &self,
+        stderr: &mut Term,
+        case: &InputResolution,
+    ) -> io::Result<()> {
+        if let InputResolution::PathDoesNotExist {
+            input_string,
+            path_tried,
+        } = case
+        {
+            writeln!(
+                stderr,
+                "  {} {} {}",
+                self.metadata_style.apply_to("•"),
+                self.error_style
+                    .apply_to(format!("Input: '{}'", input_string)),
+                self.metadata_style
+                    .apply_to(format!("(checked: {:?})", path_tried))
+            )?;
+        }
+        Ok(())
     }
 
-    markdown_output
+    fn report_invalid_glob_case(
+        &self,
+        stderr: &mut Term,
+        case: &InputResolution,
+    ) -> io::Result<()> {
+        if let InputResolution::InvalidGlobPattern {
+            input_string,
+            error,
+        } = case
+        {
+            writeln!(
+                stderr,
+                "  {} {} {}",
+                self.metadata_style.apply_to("•"),
+                self.error_style
+                    .apply_to(format!("Input: '{}'", input_string)),
+                self.metadata_style.apply_to(format!("(error: {})", error))
+            )?;
+        }
+        Ok(())
+    }
+
+    fn report_not_found_case(&self, stderr: &mut Term, case: &InputResolution) -> io::Result<()> {
+        if let InputResolution::NotFound { input_string } = case {
+            writeln!(
+                stderr,
+                "  {} {}",
+                self.metadata_style.apply_to("•"),
+                self.warning_style
+                    .apply_to(format!("Input: '{}'", input_string))
+            )?;
+        }
+        Ok(())
+    }
+
+    fn report_ambiguous_case(&self, stderr: &mut Term, case: &InputResolution) -> io::Result<()> {
+        if let InputResolution::Ambiguous {
+            input_string,
+            conflicting_paths,
+        } = case
+        {
+            write!(
+                stderr,
+                "  {} {} ",
+                self.metadata_style.apply_to("•"),
+                self.ambiguous_style.apply_to("Input")
+            )?;
+            write!(
+                stderr,
+                "{} ",
+                self.warning_style.apply_to(format!("'{}'", input_string))
+            )?;
+            writeln!(stderr, "{}", self.ambiguous_style.apply_to("matched:"))?;
+
+            const MAX_TO_SHOW: usize = 8;
+            for (i, path) in conflicting_paths.iter().enumerate() {
+                if i < MAX_TO_SHOW {
+                    writeln!(
+                        stderr,
+                        "    {} {}",
+                        self.metadata_style.apply_to("→"),
+                        self.filename_style.apply_to(format!("{:?}", path))
+                    )?;
+                } else {
+                    let remaining = conflicting_paths.len() - MAX_TO_SHOW;
+                    writeln!(
+                        stderr,
+                        "    {} ... and {} more match{}.",
+                        self.metadata_style.apply_to("→"),
+                        self.metadata_style.apply_to(remaining.to_string()),
+                        if remaining == 1 { "" } else { "es" }
+                    )?;
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn report_successful_file_case(
+        &self,
+        stderr: &mut Term,
+        resolved_file: &ResolvedFile,
+    ) -> io::Result<()> {
+        writeln!(
+            stderr,
+            "  {} {}",
+            self.metadata_style.apply_to("✓"),
+            self.filename_style
+                .apply_to(format!("{:?}", resolved_file.display_path()))
+        )
+    }
 }

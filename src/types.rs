@@ -1,5 +1,11 @@
 use std::path::{Path, PathBuf};
 
+pub struct FileContext {
+    pub display_path: String,
+    pub content: String,
+    pub char_count: usize,
+}
+
 /// Represents a successfully resolved file, ready for inclusion.
 ///
 /// It stores the path intended for display to the user (and in the Markdown header)
@@ -76,6 +82,13 @@ pub enum InputResolution<'a> {
         input_string: &'a str,
         /// Paths (typically relative to PWD for display) that caused the ambiguity.
         conflicting_paths: Vec<PathBuf>,
+    },
+
+    /// The input string was treated as a glob pattern, but the pattern was malformed.
+    InvalidGlobPattern {
+        input_string: &'a str,
+        /// The error message provided by the glob crate.
+        error: String,
     },
 
     /// The input string could not be found after searching.
