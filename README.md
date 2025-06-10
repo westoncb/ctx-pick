@@ -3,9 +3,9 @@
 [](https://www.google.com/search?q=https://crates.io/crates/ctx-pick)
 [](https://opensource.org/licenses/MIT)
 
-`ctx-pick` is a simple command-line utility that gathers file contents, formats them into a single Markdown string, and copies it to your clipboard. It's designed to make it easy to provide code context to LLMs.
+`ctx-pick` is a powerful command-line utility that intelligently gathers file contents, formats them into a single Markdown string, and copies it to your clipboard. It's designed to make it effortless to provide code context to LLMs.
 
-It intelligently finds files based on direct paths, directory names, or even partial file names, then reports on what it found before copying the final context.
+It can find files by direct path, directory, partial name, suffix, or even **glob patterns**. It can also extract a structural **code skeleton** instead of the full file content, giving you fine-grained control over the context you build.
 
 ---
 
@@ -21,13 +21,19 @@ cargo install ctx-pick
 
 ## Usage
 
-The basic command structure is to provide a space-separated list of files, directories, or partial names.
+The basic command structure is to provide a space-separated list of inputs, followed by any optional flags.
 
 ```sh
-ctx-pick [INPUTS]...
+ctx-pick [INPUTS]... [OPTIONS]
 ```
 
-### Examples
+### Options
+
+- `--depth <LEVEL>`: Instead of full file content, this extracts a structural "skeleton" of the code (e.g., function signatures, struct definitions). This is perfect for getting a high-level overview of a file's structure. A depth of `3-5` is usually effective.
+
+---
+
+## Examples
 
 **1. Pick specific files by path:**
 
@@ -42,47 +48,88 @@ ctx-pick src/main.rs src/types.rs
 ctx-pick src
 ```
 
-**3. Use partial file names:**
+**3. Use glob patterns to select files:**
 
-> `ctx-pick` will find files that contain the input string. It prioritizes exact filename matches over partial ones.
+> **Note:** It's good practice to quote your glob patterns to prevent your shell from expanding them.
 
 ```sh
-# Assuming 'main.rs' and 'display.rs' are the only files containing these strings
-ctx-pick main display
+# Grab all TypeScript files in the 'src' directory, recursively
+ctx-pick 'src/**/*.ts'
+
+# Grab all Rust and TypeScript files in the root
+ctx-pick '*.rs' '*.ts'
 ```
 
-**4. Combine all methods:**
+**4. Use partial names or path suffixes:**
+
+> `ctx-pick` will find files whose relative paths contain the input string.
 
 ```sh
-# Gets lib.rs, all files in the 'tests' dir, and the file matching 'config'
-ctx-pick src/lib.rs tests config
+# Finds 'src/display.rs' by its partial name
+ctx-pick display
+
+# Finds 'src/file_resolver.rs' by its suffix
+ctx-pick file_resolver
 ```
 
-### Example Output
-
-If successful, `ctx-pick` will report its actions to `stderr` and copy the context to your clipboard.
+**5. Extract Code Skeletons:**
 
 ```sh
-$ ctx-pick src/config.rs src/error.rs
-✅ Context copied to clipboard (2 files, 23 lines)
+# Get the skeletons of main.rs and the file_resolver at depth 4
+ctx-pick main file_resolver --depth=4
+```
+
+---
+
+## Output & Previews
+
+`ctx-pick` provides a rich preview of its actions in your terminal (`stderr`) so you always know what's been copied.
+
+### Example 1: Full Content Mode
+
+```sh
+$ ctx-pick src/main.rs src/error.rs
+✅ Context copied to clipboard (2 files, 2987 characters)
 ========================================
 Included files:
 
-1. src/config.rs
-   📄 20 lines
-2. src/error.rs
-   📄 3 lines
+1. src/main.rs
+    📄 2541 characters
 
+2. src/error.rs
+    📄 446 characters
 ========================================
 ```
 
-The content copied to the clipboard will be formatted in Markdown like this:
+### Example 2: Skeleton Mode
+
+The output clearly indicates that a skeleton was generated, at what depth, and shows the character count of the resulting skeleton for each file.
+
+```sh
+$ ctx-pick src/main.rs src/display.rs --depth=4
+✅ Context skeleton copied to clipboard (2 files, 1452 characters)
+========================================
+Included files:
+
+1. src/main.rs (skeleton only; depth=4)
+    🧬 850 characters
+
+2. src/display.rs (skeleton only; depth=4)
+    🧬 602 characters
+========================================
+```
+
+### Clipboard Content
+
+The content copied to your clipboard is formatted in clean Markdown.
+
+**Full Content:**
 
 ````markdown
 src/config.rs
 
 ```rust
-use crate::error::AppError; // We'll define this in the next step
+use crate::error::AppError;
 use std::env;
 // ... (rest of file content) ...
 ```
@@ -91,8 +138,16 @@ src/error.rs
 
 ```rust
 use thiserror::Error;
-
-#[derive(Error, Debug)]
 // ... (rest of file content) ...
+```
+````
+
+**Skeleton Content (`--depth`):**
+
+````markdown
+src/symbol_extractor.rs
+
+```
+pub fn create_skeleton_by_depth ( source_code : & str , file_extension : & str , max_depth : usize ) -> Result < String , String > { ... } fn collect_tokens_at_depth ( node : Node , current_depth : usize , max_depth : usize , tokens : & mut Vec < String > , source_bytes : & [ u8 ] ) { ... }
 ```
 ````
