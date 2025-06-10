@@ -1,26 +1,26 @@
 // src/symbol_extractor.rs
 
-use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator};
+use tree_sitter::{Language, Node, Parser};
 
-/// Extracts symbol definition lines from source code.
+/// Creates a code "skeleton" by walking the CST up to a specified depth.
 ///
-/// This function uses a `tags.scm` query file and filters for captures that
-/// start with `@definition.`. It collects the first line of each definition node,
-/// sorts them by source position, and removes duplicates to produce a clean
-/// "skeleton" of the file.
-pub fn extract_symbols(source_code: &str, file_extension: &str) -> Result<String, String> {
-    let (language, query_source): (Language, &str) = match file_extension {
-        "rs" => (
-            tree_sitter_rust::LANGUAGE.into(),
-            include_str!("../queries/rust/tags.scm"),
-        ),
-        "ts" => (
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-            include_str!("../queries/typescript/tags.scm"),
-        ),
+/// This function walks the Concrete Syntax Tree of the source code down to the
+/// `max_depth`. It collects the text of all terminal nodes (leaves) it finds
+/// within that depth, and then joins them with spaces to create a flattened,
+/// high-level representation of the code's structure.
+pub fn create_skeleton_by_depth(
+    source_code: &str,
+    file_extension: &str,
+    max_depth: usize,
+) -> Result<String, String> {
+    // --- Boilerplate: Language loading and Parsing (mostly unchanged) ---
+    let language: Language = match file_extension {
+        "rs" => tree_sitter_rust::LANGUAGE.into(),
+        "ts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        // Add other languages here as needed
         _ => {
             return Err(format!(
-                "Symbol extraction not supported for file extension: '{}'",
+                "Language support not configured for file extension: '{}'",
                 file_extension
             ));
         }
@@ -35,53 +35,63 @@ pub fn extract_symbols(source_code: &str, file_extension: &str) -> Result<String
         .parse(source_code, None)
         .ok_or("Internal error: Failed to parse source code.")?;
 
-    let query = Query::new(&language, query_source)
-        .map_err(|e| format!("Internal error: Failed to compile tree-sitter query. {}", e))?;
+    // --- Core Logic: Depth-Limited Walk (The New Part) ---
 
-    let mut query_cursor = QueryCursor::new();
-    let mut matches = query_cursor.matches(&query, tree.root_node(), source_code.as_bytes());
+    let mut tokens: Vec<String> = Vec::new();
+    let root_node = tree.root_node();
 
-    let mut captured_lines = Vec::new();
+    // Start the recursive walk from the root node (depth 0).
+    collect_tokens_at_depth(
+        root_node,
+        0, // current_depth
+        max_depth,
+        &mut tokens,
+        source_code.as_bytes(),
+    );
 
-    while let Some(mat) = matches.next() {
-        for cap in mat.captures {
-            let capture_name = &query.capture_names()[cap.index as usize];
+    if tokens.is_empty() {
+        return Ok("(No structure found)".to_string());
+    }
 
-            // The final, simple filter: only care about definition tags.
-            if capture_name.starts_with("definition") {
-                let node = cap.node;
-                let start_byte = node.start_byte();
+    // Join the collected tokens with a space, as discussed for the LLM use case.
+    Ok(tokens.join(" "))
+}
 
-                if let Some(line_text) = node
-                    .utf8_text(source_code.as_bytes())
-                    .ok()
-                    .and_then(|s| s.lines().next())
-                {
-                    let trimmed_line = line_text.trim();
-                    if !trimmed_line.is_empty() {
-                        captured_lines.push((start_byte, trimmed_line.to_string()));
-                    }
-                }
+/// A recursive helper function to walk the tree to a max depth.
+fn collect_tokens_at_depth(
+    node: Node,
+    current_depth: usize,
+    max_depth: usize,
+    tokens: &mut Vec<String>,
+    source_bytes: &[u8],
+) {
+    // Base Case: If we've exceeded the max depth, stop recursing.
+    if current_depth > max_depth {
+        return;
+    }
+
+    // If a node is a "leaf" (has no children), it's a terminal token.
+    // We capture its text.
+    if node.child_count() == 0 {
+        if let Ok(text) = node.utf8_text(source_bytes) {
+            let trimmed_text = text.trim();
+            if !trimmed_text.is_empty() {
+                tokens.push(trimmed_text.to_string());
             }
         }
+        return; // No children to recurse into.
     }
 
-    if captured_lines.is_empty() {
-        return Ok("(No symbols found)".to_string());
+    // If the node is not a leaf, recurse into its children.
+    // We use a TreeCursor for an efficient walk.
+    let mut cursor = node.walk();
+    for child_node in node.children(&mut cursor) {
+        collect_tokens_at_depth(
+            child_node,
+            current_depth + 1, // Increment depth for the next level
+            max_depth,
+            tokens,
+            source_bytes,
+        );
     }
-
-    // Sort by source code position.
-    captured_lines.sort_by_key(|(byte, _)| *byte);
-
-    // Remove duplicate lines that may result from multiple matching tags.
-    captured_lines.dedup_by(|a, b| a.1 == b.1);
-
-    // Format the final output string.
-    let result = captured_lines
-        .into_iter()
-        .map(|(_, text)| text)
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    Ok(result)
 }

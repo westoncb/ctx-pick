@@ -299,7 +299,7 @@ pub fn generate_markdown_output(files: &[ResolvedFile], symbols_mode: bool) -> S
                         .and_then(|s| s.to_str())
                         .unwrap_or("");
 
-                    match symbol_extractor::extract_symbols(&content, extension) {
+                    match symbol_extractor::create_skeleton_by_depth(&content, extension, 4) {
                         Ok(symbols) => symbols,
                         Err(e) => {
                             // If symbol extraction fails, provide a helpful error and fall back
