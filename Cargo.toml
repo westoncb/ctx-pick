@@ -2,10 +2,10 @@
 name = "ctx-pick"
 description = "A CLI tool to concatenate files for LLM context"
 license = "MIT"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 repository = "https://github.com/westoncb/ctx-pick"
-keywords = ["cli", "files", "markdown", "llm"]
+keywords = ["cli", "llm", "context"]
 categories = ["command-line-utilities"]
 authors = ["Weston C. Beecroft <westoncb@gmail.com>"]
 readme = "README.md"
