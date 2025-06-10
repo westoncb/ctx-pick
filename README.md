@@ -31,6 +31,8 @@ ctx-pick [INPUTS]... [OPTIONS]
 
 - `--depth <LEVEL>`: Instead of full file content, this extracts a structural "skeleton" of the code (e.g., function signatures, struct definitions). This is for getting a high-level overview of a file's structure. A depth of `2-4` is usually effective. The depth indicates how far the algorithm walks a parse tree of the source file collecting tokens.
 
+- `--to-stdout`: Print the final context to stdout instead of copying to the clipboard.
+
 ---
 
 ## Examples
