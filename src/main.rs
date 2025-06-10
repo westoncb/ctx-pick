@@ -22,7 +22,7 @@ use std::{collections::BTreeSet, path::Path, path::PathBuf};
 #[derive(Parser, Debug)]
 #[clap(
     author = "Weston C. Beecroft",
-    version = "0.2.0", // Version bump for new features!
+    version = "0.3.1", // Version bump for new features!
     about = "Builds context strings from code files for LLMs and copies to clipboard.",
     long_about = None // The long help is now the main help text above.
 )]
