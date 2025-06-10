@@ -137,7 +137,6 @@ impl DisplayManager {
         };
         let file_count = contexts.len();
 
-        // ... (The summary message logic is largely the same) ...
         match clipboard_result {
             Ok(_) => {
                 writeln!(
@@ -190,25 +189,35 @@ impl DisplayManager {
         } else {
             for (i, context) in contexts.iter().enumerate() {
                 let (icon, label) = if let Some(d) = depth {
-                    // Skeleton mode: create the detailed label
-                    ("🧬", format!("{} (depth={})", context.display_path, d))
+                    (
+                        "🧬",
+                        format!("{} (skeleton only; depth={})", context.display_path, d),
+                    )
                 } else {
-                    // Full file mode: just use the path
                     ("📄", context.display_path.clone())
+                };
+
+                let (metric_value, metric_unit) = if depth.is_some() {
+                    // Skeleton mode: count characters from the context's content.
+                    (context.content.chars().count(), "characters")
+                } else {
+                    // Full file mode: count lines from the context's content.
+                    (context.content.lines().count(), "lines")
                 };
 
                 writeln!(
                     stderr,
                     "\n{}. {}",
                     self.metadata_style.apply_to(format!("{}", i + 1)),
-                    self.filename_style.apply_to(label) // Use the new rich label
+                    self.filename_style.apply_to(label)
                 )?;
 
                 writeln!(
                     stderr,
-                    "    {} {} characters",
+                    "    {} {} {}", // e.g., "📄 125 lines" or "🧬 850 characters"
                     self.metadata_style.apply_to(icon),
-                    self.metadata_style.apply_to(context.char_count.to_string())
+                    self.metadata_style.apply_to(metric_value.to_string()),
+                    self.metadata_style.apply_to(metric_unit)
                 )?;
             }
         }

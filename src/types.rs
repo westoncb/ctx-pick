@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 pub struct FileContext {
     pub display_path: String,
     pub content: String,
-    pub char_count: usize,
 }
 
 /// Represents a successfully resolved file, ready for inclusion.

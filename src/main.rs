@@ -13,7 +13,7 @@ use crate::{
 };
 use arboard::Clipboard;
 use clap::Parser;
-use std::{collections::BTreeSet, path::Path, path::PathBuf};
+use std::{collections::BTreeSet, path::PathBuf};
 
 /// A versatile CLI tool that finds files by name, path, or glob pattern,
 /// extracts their content or a structural 'skeleton', formats it as
@@ -120,17 +120,17 @@ fn main() -> Result<(), AppError> {
         std::process::exit(1);
     }
 
-    // 1. Process all resolved files into our new `FileContext` struct.
-    //    This function now returns a list of processed files, not a single string.
+    // 1. Process files into contexts.
     let file_contexts = generate_file_contexts(&final_ordered_files, cli.depth);
 
-    // 2. Build the final Markdown string for the clipboard from the contexts.
+    // 2. Build the final Markdown string.
     let mut markdown_output = String::new();
+    // ... (this loop is unchanged) ...
     for context in &file_contexts {
         let lang_hint = if cli.depth.is_some() {
             ""
         } else {
-            Path::new(&context.display_path)
+            std::path::Path::new(&context.display_path)
                 .extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
@@ -143,9 +143,18 @@ fn main() -> Result<(), AppError> {
         ));
     }
 
-    // 3. Calculate the total character count from the final output.
-    let total_chars = markdown_output.len();
-    let unit_str = "characters"; // We are now always reporting total characters.
+    // 3. Calculate the total metric and unit string CONDITIONALLY.
+    let (total_metric, unit_str) = if cli.depth.is_some() {
+        // Skeleton mode: count total characters in the final output.
+        (markdown_output.len(), "characters")
+    } else {
+        // Full file mode: sum the line counts from each file's content.
+        let total_lines = file_contexts
+            .iter()
+            .map(|ctx| ctx.content.lines().count())
+            .sum();
+        (total_lines, "lines")
+    };
 
     // 4. Attempt to copy to the clipboard.
     let clipboard_result = match Clipboard::new() {
@@ -156,10 +165,10 @@ fn main() -> Result<(), AppError> {
     // 5. Display the summary report, passing the rich context list.
     display
         .print_operation_summary_and_preview(
-            &file_contexts, // Pass the contexts, not the old ResolvedFile list
+            &file_contexts,
             &clipboard_result,
-            total_chars,
-            unit_str,
+            total_metric, // Pass the correctly calculated total
+            unit_str,     // Pass the correct unit
             cli.depth,
         )
         .unwrap_or_else(|e| eprintln!("Display error during summary: {}", e));
@@ -208,7 +217,6 @@ fn generate_file_contexts(files: &[ResolvedFile], depth: Option<usize>) -> Vec<F
 
         contexts.push(FileContext {
             display_path,
-            char_count: final_content.chars().count(), // Get the char count of the final content
             content: final_content,
         });
     }

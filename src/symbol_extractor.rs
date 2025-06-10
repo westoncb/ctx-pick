@@ -44,7 +44,7 @@ pub fn create_skeleton_by_depth(
     collect_tokens_at_depth(
         root_node,
         0, // current_depth
-        max_depth,
+        max_depth + 1,
         &mut tokens,
         source_code.as_bytes(),
     );
