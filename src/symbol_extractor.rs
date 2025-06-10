@@ -16,6 +16,7 @@ pub fn create_skeleton_by_depth(
     // --- Boilerplate: Language loading and Parsing (mostly unchanged) ---
     let language: Language = match file_extension {
         "rs" => tree_sitter_rust::LANGUAGE.into(),
+        "py" => tree_sitter_python::LANGUAGE.into(),
         "ts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         // Add other languages here as needed
         _ => {
