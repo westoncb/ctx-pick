@@ -5,7 +5,7 @@
 
 `ctx-pick` is a simple command-line utility that gathers file contents, formats them into a single Markdown string, and copies it to your clipboard. It's designed to make it effortless to provide code context to LLMs.
 
-It can find files by direct path, directory, partial name, suffix, or even **glob patterns**. It can also extract a structural **code skeleton** instead of the full file content, giving you fine-grained control over the context you build.
+It can find files by direct path, directory, partial name, suffix, or even **glob patterns**. It can also extract abbreviated "source views" using the --depth param which controls how far the algorithm walks the parse tree for a given source file collecting tokens. Currently Rust, Python and Typescript are supported.
 
 ---
 
@@ -29,7 +29,7 @@ ctx-pick [INPUTS]... [OPTIONS]
 
 ### Options
 
-- `--depth <LEVEL>`: Instead of full file content, this extracts a structural "skeleton" of the code (e.g., function signatures, struct definitions). This is perfect for getting a high-level overview of a file's structure. A depth of `3-5` is usually effective.
+- `--depth <LEVEL>`: Instead of full file content, this extracts a structural "skeleton" of the code (e.g., function signatures, struct definitions). This is for getting a high-level overview of a file's structure. A depth of `2-4` is usually effective. The depth indicates how far the algorithm walks a parse tree of the source file collecting tokens.
 
 ---
 
@@ -103,7 +103,7 @@ Included files:
 
 ### Example 2: Skeleton Mode
 
-The output clearly indicates that a skeleton was generated, at what depth, and shows the character count of the resulting skeleton for each file.
+The output indicates that a skeleton was generated, at what depth, and shows the character count of the resulting skeleton for each file.
 
 ```sh
 $ ctx-pick src/main.rs src/display.rs --depth=4
