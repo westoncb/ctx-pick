@@ -13,12 +13,11 @@ pub fn create_skeleton_by_depth(
     file_extension: &str,
     max_depth: usize,
 ) -> Result<String, String> {
-    // --- Boilerplate: Language loading and Parsing (mostly unchanged) ---
+    // --- Language loading ---
     let language: Language = match file_extension {
         "rs" => tree_sitter_rust::LANGUAGE.into(),
         "py" => tree_sitter_python::LANGUAGE.into(),
         "ts" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        // Add other languages here as needed
         _ => {
             return Err(format!(
                 "Language support not configured for file extension: '{}'",
@@ -36,7 +35,7 @@ pub fn create_skeleton_by_depth(
         .parse(source_code, None)
         .ok_or("Internal error: Failed to parse source code.")?;
 
-    // --- Core Logic: Depth-Limited Walk (The New Part) ---
+    // --- Core Logic: Depth-Limited Walk ---
 
     let mut tokens: Vec<String> = Vec::new();
     let root_node = tree.root_node();
@@ -54,7 +53,7 @@ pub fn create_skeleton_by_depth(
         return Ok("(No structure found)".to_string());
     }
 
-    // Join the collected tokens with a space, as discussed for the LLM use case.
+    // Join the collected tokens with a space (likely breaks syntactic validity; should be fine for LLMs)
     Ok(tokens.join(" "))
 }
 

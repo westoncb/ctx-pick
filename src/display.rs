@@ -152,7 +152,6 @@ impl DisplayManager {
                 )?;
             }
             Err(err) => {
-                // ... (error case is unchanged) ...
                 writeln!(
                     stderr,
                     "{} Failed to copy to clipboard.",

@@ -152,7 +152,7 @@ fn main() -> Result<(), AppError> {
         // Just print the final Markdown to standard output and exit.
         print!("{}", markdown_output);
     } else {
-        // --- Interactive/Clipboard Path (existing logic) ---
+        // --- Interactive/Clipboard Path ---
         let (total_metric, unit_str) = if cli.depth.is_some() {
             (markdown_output.len(), "characters")
         } else {

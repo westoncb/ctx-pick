@@ -7,12 +7,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
-// Helper to check if a WalkDir entry is a file. (Unchanged)
+// Helper to check if a WalkDir entry is a file.
 fn is_walkdir_file_entry(entry: &DirEntry) -> bool {
     entry.file_type().is_file()
 }
 
-/// Attempts to create a ResolvedFile instance from a given path. (Unchanged)
+/// Attempts to create a ResolvedFile instance from a given path.
 fn create_resolved_file(path_to_resolve: &Path, config: &Config) -> Result<ResolvedFile, String> {
     let canonical_path = fs::canonicalize(path_to_resolve)
         .map_err(|e| format!("Failed to canonicalize path {:?}: {}", path_to_resolve, e))?;

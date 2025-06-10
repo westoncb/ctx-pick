@@ -1,4 +1,4 @@
-use crate::error::AppError; // We'll define this in the next step
+use crate::error::AppError;
 use std::env;
 use std::path::PathBuf;
 
