@@ -3,7 +3,7 @@
 [](https://www.google.com/search?q=https://crates.io/crates/ctx-pick)
 [](https://opensource.org/licenses/MIT)
 
-`ctx-pick` is a powerful command-line utility that intelligently gathers file contents, formats them into a single Markdown string, and copies it to your clipboard. It's designed to make it effortless to provide code context to LLMs.
+`ctx-pick` is a simple command-line utility that gathers file contents, formats them into a single Markdown string, and copies it to your clipboard. It's designed to make it effortless to provide code context to LLMs.
 
 It can find files by direct path, directory, partial name, suffix, or even **glob patterns**. It can also extract a structural **code skeleton** instead of the full file content, giving you fine-grained control over the context you build.
 
@@ -89,15 +89,15 @@ ctx-pick main file_resolver --depth=4
 
 ```sh
 $ ctx-pick src/main.rs src/error.rs
-✅ Context copied to clipboard (2 files, 2987 characters)
+✅ Context copied to clipboard (2 files, 1000 lines)
 ========================================
 Included files:
 
 1. src/main.rs
-    📄 2541 characters
+    📄 600 lines
 
 2. src/error.rs
-    📄 446 characters
+    📄 400 lines
 ========================================
 ```
 
