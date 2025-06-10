@@ -13,7 +13,7 @@ use crate::{
 };
 use arboard::Clipboard;
 use clap::Parser;
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{collections::BTreeSet, path::Path, path::PathBuf};
 
 /// A versatile CLI tool that finds files by name, path, or glob pattern,
 /// extracts their content or a structural 'skeleton', formats it as
@@ -41,6 +41,11 @@ struct Cli {
         help = "Extract a code skeleton at a specific depth."
     )]
     depth: Option<usize>,
+
+    /// Print the final context to stdout instead of copying to the clipboard.
+    /// This is useful for piping the output to other commands.
+    #[arg(long, help = "Print to stdout instead of the clipboard")]
+    to_stdout: bool,
 }
 
 fn main() -> Result<(), AppError> {
@@ -120,17 +125,16 @@ fn main() -> Result<(), AppError> {
         std::process::exit(1);
     }
 
-    // 1. Process files into contexts.
+    // 1. Process all resolved files into our FileContext struct.
     let file_contexts = generate_file_contexts(&final_ordered_files, cli.depth);
 
-    // 2. Build the final Markdown string.
+    // 2. Build the final Markdown string for the output.
     let mut markdown_output = String::new();
-    // ... (this loop is unchanged) ...
     for context in &file_contexts {
         let lang_hint = if cli.depth.is_some() {
             ""
         } else {
-            std::path::Path::new(&context.display_path)
+            Path::new(&context.display_path)
                 .extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
@@ -143,38 +147,40 @@ fn main() -> Result<(), AppError> {
         ));
     }
 
-    // 3. Calculate the total metric and unit string CONDITIONALLY.
-    let (total_metric, unit_str) = if cli.depth.is_some() {
-        // Skeleton mode: count total characters in the final output.
-        (markdown_output.len(), "characters")
+    if cli.to_stdout {
+        // --- Script-Friendly Path ---
+        // Just print the final Markdown to standard output and exit.
+        print!("{}", markdown_output);
     } else {
-        // Full file mode: sum the line counts from each file's content.
-        let total_lines = file_contexts
-            .iter()
-            .map(|ctx| ctx.content.lines().count())
-            .sum();
-        (total_lines, "lines")
-    };
+        // --- Interactive/Clipboard Path (existing logic) ---
+        let (total_metric, unit_str) = if cli.depth.is_some() {
+            (markdown_output.len(), "characters")
+        } else {
+            let total_lines = file_contexts
+                .iter()
+                .map(|ctx| ctx.content.lines().count())
+                .sum();
+            (total_lines, "lines")
+        };
 
-    // 4. Attempt to copy to the clipboard.
-    let clipboard_result = match Clipboard::new() {
-        Ok(mut clipboard) => clipboard.set_text(markdown_output.clone()),
-        Err(err) => Err(err),
-    };
+        let clipboard_result = match Clipboard::new() {
+            Ok(mut clipboard) => clipboard.set_text(markdown_output.clone()),
+            Err(err) => Err(err),
+        };
 
-    // 5. Display the summary report, passing the rich context list.
-    display
-        .print_operation_summary_and_preview(
-            &file_contexts,
-            &clipboard_result,
-            total_metric, // Pass the correctly calculated total
-            unit_str,     // Pass the correct unit
-            cli.depth,
-        )
-        .unwrap_or_else(|e| eprintln!("Display error during summary: {}", e));
+        display
+            .print_operation_summary_and_preview(
+                &file_contexts,
+                &clipboard_result,
+                total_metric,
+                unit_str,
+                cli.depth,
+            )
+            .unwrap_or_else(|e| eprintln!("Display error during summary: {}", e));
 
-    if clipboard_result.is_err() {
-        println!("{}", markdown_output);
+        if clipboard_result.is_err() {
+            println!("{}", markdown_output);
+        }
     }
 
     Ok(())
